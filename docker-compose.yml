@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:14  # Use the latest stable PostgreSQL version
+    environment:
+      POSTGRES_USER: trade_db_admin
+      POSTGRES_PASSWORD: TRADES123!
+      POSTGRES_DB: trades_db
+    ports:
+      - "5432:5432"  # Map the local machine's port to the Docker container port
+    volumes:
+      - db_data:/var/lib/postgresql/data  # Persist data using Docker volumes
+
+volumes:
+  db_data:  # Creates a volume to store database data
