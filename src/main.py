@@ -20,6 +20,7 @@ def authorize():
      response.raise_for_status()
 
      os.environ["TOKEN"] = response.json()["token"]
+     print(os.environ["TOKEN"])
      main()
 
 def main(): 
@@ -48,4 +49,4 @@ def transactions_to_csv(data, filename="transactions.csv"):
         writer.writeheader()
         for transaction in transactions:
             writer.writerow(transaction)
-authorize()
+main()
