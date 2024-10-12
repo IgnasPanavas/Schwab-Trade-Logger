@@ -21,9 +21,9 @@ def authorize():
 
      os.environ["TOKEN"] = response.json()["token"]
      print(os.environ["TOKEN"])
-     main()
+     get_data()
 
-def main(): 
+def get_data(): 
     url = trade_url
     
     headers = constants.headers
@@ -49,4 +49,4 @@ def transactions_to_csv(data, filename="transactions.csv"):
         writer.writeheader()
         for transaction in transactions:
             writer.writerow(transaction)
-main()
+get_data()
