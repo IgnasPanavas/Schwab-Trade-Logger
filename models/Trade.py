@@ -20,12 +20,10 @@ class Trade(Base):
     action = Column(String(20), nullable=False)  # 'buy' or 'sell'
     symbol = Column(String(50), nullable=False)
     description = Column(String, nullable=True)
-    contracts = Column(Integer, nullable=False)
+    quantity = Column(Integer, nullable=False)
     price = Column(DECIMAL(10, 2), nullable=False)
-    total_cost = Column(DECIMAL(10, 2), nullable=False)
+    amount = Column(DECIMAL(10, 2), nullable=False)
     commission = Column(DECIMAL(10, 2), nullable=True)
-    expiration_date = Column(Date, nullable=True)
-    strike_price = Column(DECIMAL(10, 2), nullable=True)
 
     # Relationships
     trade_group = relationship('TradeGroup', back_populates='trades')

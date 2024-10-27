@@ -1,108 +1,118 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from models.Trade import Trade, Base  # Import your models
-from models.TradeGroups import TradeGroup
+import re
+from datetime import datetime
+
 from db_manager import get_db_session
+from models import Trade
+from models.TradeGroups import TradeGroup
 
+def extract_date(date_string):
+    primary_date = date_string.split(" as of ")[0]
+    return datetime.strptime(primary_date, "%m/%d/%Y").date()
 
+def clean_numeric(value):
+    cleaned_value = re.sub(r'[^\d.-]', '', value)
+    return float(cleaned_value) if cleaned_value else 0  # Default to 0 if empty
 
-# Function to add a trade
+def clean_integer(value):
+    cleaned_value = re.sub(r'[^\d-]', '', value)
+    return int(cleaned_value) if cleaned_value else 0  # Default to 0 if empty
+
+def create_trade_entry(trade_data, trade_group_id):
+    """Helper function to create a Trade object from trade data."""
+    return Trade(
+        trade_group_id=trade_group_id,
+        trade_date=extract_date(trade_data['Date']),
+        action=trade_data['Action'],
+        symbol=trade_data['Symbol'],
+        description=trade_data['Description'],
+        quantity=clean_integer(trade_data['Quantity']),
+        price=clean_numeric(trade_data['Price']),
+        amount=clean_numeric(trade_data['Amount']),
+        commission=clean_numeric(trade_data['Fees & Comm']),
+    )
+
 def add_trade(trade_data):
+    """Main function to route trade action to the correct handler."""
     with get_db_session() as session:
-        # Check if this is an opening or closing trade
-        if trade_data['action'] == 'Buy' or "Sell to Open" or "Buy to Open":  # Assuming 'buy' is for opening trades
-            # Create a new TradeGroup for opening trade
-            trade_group = TradeGroup(
-                symbol=trade_data['symbol'],
-                total_quantity=trade_data['contracts'],
-                open_quantity=trade_data['contracts'],  # All contracts are open initially
-                status='open'  # Trade group is open
-            )
-            session.add(trade_group)
-            session.commit()  # Commit to generate the trade_group_id
+        action = trade_data['Action']
+        
+        if action in ('Buy', 'Sell to Open', 'Buy to Open'):
+            add_opening_trade(trade_data, session)
+        elif action in ('Sell', 'Sell to Close', 'Buy to Close'):
+            add_closing_trade(trade_data, session)
+        elif action == 'Expired':
+            add_expired_trade(trade_data, session)
+        else:
+            print(f"Unrecognized action: {action}")
 
-            # Now create the actual Trade entry
-            trade = Trade(
-                trade_group_id=trade_group.trade_group_id,
-                trade_date=trade_data['trade_date'],
-                action=trade_data['action'],
-                symbol=trade_data['symbol'],
-                description=trade_data.get('description'),
-                contracts=trade_data['contracts'],
-                price=trade_data['price'],
-                total_cost=trade_data['total_cost'],
-                commission=trade_data.get('commission'),
-                expiration_date=trade_data.get('expiration_date'),
-                strike_price=trade_data.get('strike_price')
-            )
-            session.add(trade)
-            session.commit()
+def add_opening_trade(trade_data, session):
+    """Handles 'Buy', 'Sell to Open', and 'Buy to Open' actions."""
+    # Create a new TradeGroup for opening trade
+    quantity = clean_integer(trade_data['Quantity'])
+    trade_group = TradeGroup(
+        symbol=trade_data['Symbol'],
+        total_quantity=quantity,
+        open_quantity=quantity,  # All contracts are open initially
+        status='open'  # Trade group is open
+    )
+    session.add(trade_group)
+    session.commit()  # Commit to generate the trade_group_id
 
-            print(f"Opening trade added with trade_id: {trade.trade_id} and group_id: {trade_group.trade_group_id}")
+    # Create the Trade entry
+    trade = create_trade_entry(trade_data, trade_group.trade_group_id)
+    session.add(trade)
+    session.commit()
 
-        elif trade_data['action'] == 'Sell' or 'Sell to Close' or "Buy to Close":  # Assuming 'sell' is for closing trades
-            # Find the corresponding TradeGroup
-            trade_group = session.query(TradeGroup).filter(
-                TradeGroup.symbol == trade_data['symbol'],
-                TradeGroup.status != 'closed'
-            ).first()
+    print(f"Opening trade added with trade_id: {trade.trade_id} and group_id: {trade_group.trade_group_id}")
 
-            if not trade_group:
-                print("No open trade group found for symbol. Cannot add closing trade.")
-                return
+def add_closing_trade(trade_data, session):
+    """Handles 'Sell', 'Sell to Close', and 'Buy to Close' actions."""
+    print("Detected closing trade...")
 
-            # Calculate the remaining open quantity
-            if trade_group.open_quantity >= trade_data['contracts']:
-                trade_group.open_quantity -= trade_data['contracts']
+    # Find the corresponding TradeGroup
+    trade_group = session.query(TradeGroup).filter(
+        TradeGroup.symbol == trade_data['Symbol'],
+        TradeGroup.status != 'closed'
+    ).first()
 
-                # Update the status of the trade group
-                trade_group.update_status()
+    if not trade_group:
+        print("No open trade group found for symbol. Cannot add closing trade.")
+        return
 
-                # Now add the closing trade
-                trade = Trade(
-                    trade_group_id=trade_group.trade_group_id,
-                    trade_date=trade_data['trade_date'],
-                    action=trade_data['action'],
-                    symbol=trade_data['symbol'],
-                    description=trade_data.get('description'),
-                    contracts=trade_data['contracts'],
-                    price=trade_data['price'],
-                    total_cost=trade_data['total_cost'],
-                    commission=trade_data.get('commission'),
-                    expiration_date=trade_data.get('expiration_date'),
-                    strike_price=trade_data.get('strike_price')
-                )
-                session.add(trade)
-                session.commit()
+    # Calculate the remaining open quantity
+    quantity = clean_integer(trade_data['Quantity'])
+    if trade_group.open_quantity >= abs(quantity):
+        trade_group.open_quantity -= abs(quantity)
 
-                print(f"Closing trade added with trade_id: {trade.trade_id} for group_id: {trade_group.trade_group_id}")
-            else:
-                print("Error: Closing more contracts than open in the trade group.")
+        # Update the status of the trade group
+        trade_group.update_status()
 
-# Example of adding an opening trade
-opening_trade_data = {
-    'trade_date': '2024-10-12',
-    'action': 'buy',
-    'symbol': 'AAPL',
-    'contracts': 100,
-    'price': 150.00,
-    'total_cost': 15000.00,
-    'commission': 10.00,
-    'expiration_date': None,
-    'strike_price': None
-}
-add_trade(opening_trade_data)
+        # Add the closing trade
+        trade = create_trade_entry(trade_data, trade_group.trade_group_id)
+        session.add(trade)
+        session.commit()
 
-# Example of adding a closing trade
-closing_trade_data = {
-    'trade_date': '2024-10-15',
-    'action': 'sell',
-    'symbol': 'AAPL',
-    'contracts': 40,
-    'price': 155.00,
-    'total_cost': 6200.00,
-    'commission': 10.00,
-    'expiration_date': None,
-    'strike_price': None
-}
-add_trade(closing_trade_data)
+        print(f"Closing trade added with trade_id: {trade.trade_id} for group_id: {trade_group.trade_group_id}")
+    else:
+        print("Error: Closing more contracts than open in the trade group.")
+
+def add_expired_trade(trade_data, session):
+    """Handles 'Expired' action."""
+    print("Detected expired trade...")
+
+    # No need to modify trade group quantities; just log the expiration.
+    trade_group = session.query(TradeGroup).filter(
+        TradeGroup.symbol == trade_data['Symbol'],
+        TradeGroup.status != 'closed'
+    ).first()
+
+    if not trade_group:
+        print("No open trade group found for symbol. Cannot add expired trade.")
+        return
+
+    # Create the expired trade entry
+    trade = create_trade_entry(trade_data, trade_group.trade_group_id)
+    session.add(trade)
+    session.commit()
+
+    print(f"Expired trade added with trade_id: {trade.trade_id} for group_id: {trade_group.trade_group_id}")
